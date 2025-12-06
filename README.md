@@ -22,12 +22,15 @@ parsing job descriptions and generating explanations.
    venv\Scripts\activate.bat     # Windows (powershell/cmd)
 
 2. Install dependencies:
-pip install -r requirements.txt
+    ```bash
+    pip install -r requirements.txt
 
 3. Create a .env file in the project root:
-OPENROUTER_API_KEY="API KEY"
+    ```bash
+    OPENROUTER_API_KEY="API KEY"
 
 4. Run the app:
-streamlit run app.py
+    ```bash
+    streamlit run app.py
 
 
