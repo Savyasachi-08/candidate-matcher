@@ -452,14 +452,9 @@ def dedupe_results_by_id_keep_best(results: List[Dict[str, Any]]):
 def reset_local_store():
     global _local_embeddings, _local_metadata, _id_list, _next_id, _hash_to_id
     try:
-        if os.path.exists(EMBED_FILE):
-            os.remove(EMBED_FILE)
-        if os.path.exists(META_FILE):
-            os.remove(META_FILE)
-        if os.path.exists(ID_LIST_FILE):
-            os.remove(ID_LIST_FILE)
-        if os.path.exists(HASH_FILE):
-            os.remove(HASH_FILE)
+        for f in [EMBED_FILE, META_FILE, ID_LIST_FILE, HASH_FILE]:
+            if os.path.exists(f):
+                os.remove(f)
     except Exception as e:
         st.warning(f"Failed to remove local store files: {e}")
     _local_embeddings = np.zeros((0, EMBED_DIM), dtype=np.float32)
@@ -650,6 +645,22 @@ def explain_candidate_with_llm(jd_struct: dict, resume_text: str, base_score: fl
 
 # ------------------- Streamlit UI -------------------
 
+# Initialize session state for resume text areas
+if 'resume_count' not in st.session_state:
+    st.session_state.resume_count = 1
+
+def add_resume_field():
+    st.session_state.resume_count += 1
+
+def remove_resume_field():
+    if st.session_state.resume_count > 1:
+        # Find the last key and remove it from session state if it exists
+        last_key = f"resume_text_area_{st.session_state.resume_count - 1}"
+        if last_key in st.session_state:
+            del st.session_state[last_key]
+        st.session_state.resume_count -= 1
+
+
 st.set_page_config(layout="wide", page_title="Candidate Matcher")
 st.title("Candidate Matcher — Streamlit")
 
@@ -661,48 +672,108 @@ use_llm_for_parsing = LLM_AVAILABLE
 use_llm_for_explanations = LLM_AVAILABLE
 
 with col1:
-    jd_input_type = st.radio("Job description input:", ["Paste text", "Upload file"], index=0)
+    # --- Job Description Input ---
+    st.subheader("1. Job Description (JD)")
+    jd_input_type = st.radio("JD input method:", ["Paste text", "Upload file"], index=0, key="jd_input_type")
     if jd_input_type == "Paste text":
-        jd_text = st.text_area("Paste Job Description", height=300)
+        jd_text = st.text_area("Paste Job Description", height=300, key="jd_text_area")
     else:
-        jd_file = st.file_uploader("Upload JD file (PDF/DOCX/TXT)", type=["pdf", "docx", "txt"], key="jdfile")
+        jd_file = st.file_uploader("Upload JD file (PDF/DOCX/TXT)", type=["pdf", "docx", "txt"], key="jd_file_uploader")
         jd_text = ""
         if jd_file:
             jd_text = extract_text_from_file(jd_file)
 
     st.markdown("---")
-    resumes = st.file_uploader("Upload candidate resumes (multiple)", type=["pdf", "docx", "txt"], accept_multiple_files=True)
+
+    # --- Resume Inputs ---
+    st.subheader("2. Candidate Resumes")
+    resume_input_type = st.radio("Resume input method:", ["Paste text", "Upload files"], index=0, key="resume_input_type")
+        
+    pasted_resumes = []
+    uploaded_files = []
+
+    if resume_input_type == "Paste text":
+        st.markdown("**Paste Text Resumes:**")
+        
+        # Initialization block: Ensure session state keys exist *before* the loop
+        for i in range(st.session_state.resume_count):
+            key = f"resume_text_area_{i}"
+            if key not in st.session_state:
+                st.session_state[key] = "" # Initialize with an empty string
+        
+        # Display existing text areas (Now only instantiating the widget, not assigning to state)
+        for i in range(st.session_state.resume_count):
+            key = f"resume_text_area_{i}"
+            
+            st.text_area(f"Resume {i+1} Text", height=200, key=key)
+            
+            # Collect the valid text from session state
+            if st.session_state[key].strip():
+                pasted_resumes.append((f"Pasted Resume {i+1}", st.session_state[key]))
+
+        # Add/Remove buttons
+        col_add, col_remove = st.columns([1, 6])
+        with col_add:
+            st.button("➕ Add Resume", on_click=add_resume_field, key="add_resume_btn")
+        with col_remove:
+            if st.session_state.resume_count > 1:
+                st.button("➖ Remove Last", on_click=remove_resume_field, key="remove_resume_btn")
+
+    else: # Upload files
+        uploaded_files = st.file_uploader("Upload candidate resumes (PDF/DOCX/TXT)", 
+                                           type=["pdf", "docx", "txt"], 
+                                           accept_multiple_files=True, 
+                                           key="resume_file_uploader")
 
     st.markdown("---")
     run_btn = st.button("Run Matching")
 
 with col2:
     st.markdown("**Settings**")
-    # Removed: use_llm_for_parsing and use_llm_for_explanations checkboxes
     top_k = st.slider("Top K candidates to show explanations for", 1, 10, 5)
     
-    # Display LLM status since toggles are removed
     if not LLM_AVAILABLE:
         st.warning("OPENROUTER_API_KEY not set. LLM features (JD parsing, explanations) are disabled.")
 
 
 if run_btn:
+    all_resumes_to_process = []
+    
+    # 1. Process uploaded files
+    if uploaded_files:
+        for f in uploaded_files:
+            try:
+                txt = extract_text_from_file(f)
+                if txt.strip():
+                    all_resumes_to_process.append((f.name, txt))
+            except Exception as e:
+                st.warning(f"Failed to process uploaded file {f.name}: {e}")
+
+    # 2. Process pasted resumes
+    if pasted_resumes:
+        for name, text in pasted_resumes:
+            if text.strip():
+                all_resumes_to_process.append((name, text))
+            
+    
     if not jd_text or jd_text.strip() == "":
         st.error("Please provide a job description (paste text or upload file).")
-    elif not resumes or len(resumes) == 0:
-        st.error("Please upload at least one resume.")
+    elif not all_resumes_to_process:
+        st.error("Please provide at least one resume (paste text or upload file).")
     else:
-        # AUTOMATIC CLEAR: reset local store + chroma so only newly uploaded resumes are present
+        
+        # Reset store only if there are new candidates to process
         reset_local_store()
         reset_chroma_collection(force_delete_dir=False)
 
-        st.info("Embedding and storing resumes (local files + Chroma if available)...")
-        for f in resumes:
+        st.info(f"Embedding and storing {len(all_resumes_to_process)} resumes (local files + Chroma if available)...")
+        
+        # Add all collected resumes (files and pasted text)
+        for name, txt in all_resumes_to_process:
             try:
-                txt = extract_text_from_file(f)
-                add_resume_to_store(f.name, txt)
+                add_resume_to_store(name, txt)
             except Exception as e:
-                st.warning(f"Failed to process {f.name}: {e}")
+                st.warning(f"Failed to store resume {name}: {e}")
 
         # Parse JD
         with st.spinner("Parsing job description..."):
@@ -719,7 +790,8 @@ if run_btn:
         st.subheader("Parsed Job Requirements (Preview)")
         st.json(jd_struct)
 
-        results = search_via_chroma_first_then_local(jd_text, top_k=max(top_k, len(resumes)))
+        # Use the length of processed resumes as the max k if it's smaller than top_k
+        results = search_via_chroma_first_then_local(jd_text, top_k=max(top_k, len(all_resumes_to_process)))
         # dedupe
         results = dedupe_results_by_id_keep_best(results)
 
@@ -728,19 +800,21 @@ if run_btn:
             rid = r.get("id")
             score = r.get("score", 0.0) if r.get("score") is not None else 0.0
             payload = r.get("payload") or {}
-            preview = r.get("preview") or payload.get("preview", "")
-            if (not preview) and (rid in _local_metadata):
-                preview = _local_metadata[rid].get("preview", "")
+            
+            # Use the local metadata preview which is the first 1000 chars of the full resume text
+            preview_text = _local_metadata[rid].get("preview", "") if rid in _local_metadata else r.get("preview", "")
+
             name = payload.get("name") if isinstance(payload, dict) else None
             name = name or (_local_metadata[rid]["name"] if rid in _local_metadata else f"resume_{rid}")
-            candidates.append({"name": name, "text": preview, "sim": float(score)})
-
+            candidates.append({"name": name, "text": preview_text, "sim": float(score)})
+        
         candidates = sorted(candidates, key=lambda x: x["sim"], reverse=True)
 
         st.subheader("Ranked candidates (by cosine similarity)")
         for idx, c in enumerate(candidates):
             st.markdown(f"**{idx+1}. {c['name']}** — base sim: {c['sim']:.4f}")
             with st.expander("Preview resume text"):
+                # Display the preview text (currently max 1000 chars based on 'preview' storage)
                 st.write(c["text"][:2000])
 
         if use_llm_for_explanations:
@@ -748,6 +822,7 @@ if run_btn:
             for c in candidates[:top_k]:
                 try:
                     with st.spinner(f"Explaining {c['name']}..."):
+                        # Note: The LLM gets the text stored in c['text'], which is the 1000 char preview.
                         explanation = explain_candidate_with_llm(jd_struct, c['text'], c['sim'])
                     st.markdown(f"**{c['name']}** — explanation:")
                     st.write(explanation)
