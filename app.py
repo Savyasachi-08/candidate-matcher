@@ -190,7 +190,9 @@ def init_chroma(prefers_home: bool = True):
             continue
 
     if success_path:
-        st.success(f"Chroma initialized at: {success_path}")
+        # REMOVED: st.success(f"Chroma initialized at: {success_path}")
+        # st.info("Chroma initialized.")
+        pass
     else:
         st.warning("Chroma could not be initialized — falling back to local-only.")
         _chroma_client = None
@@ -648,10 +650,15 @@ def explain_candidate_with_llm(jd_struct: dict, resume_text: str, base_score: fl
 
 # ------------------- Streamlit UI -------------------
 
-st.set_page_config(layout="wide", page_title="Candidate Matcher (Chroma + file store)")
-st.title("Candidate Matcher — Streamlit (Chroma + file store)")
+st.set_page_config(layout="wide", page_title="Candidate Matcher")
+st.title("Candidate Matcher — Streamlit")
 
 col1, col2 = st.columns([2, 1])
+
+# Determine if LLM functionality should be active based on API key presence
+LLM_AVAILABLE = bool(OPENROUTER_API_KEY)
+use_llm_for_parsing = LLM_AVAILABLE
+use_llm_for_explanations = LLM_AVAILABLE
 
 with col1:
     jd_input_type = st.radio("Job description input:", ["Paste text", "Upload file"], index=0)
@@ -671,9 +678,13 @@ with col1:
 
 with col2:
     st.markdown("**Settings**")
-    use_llm_for_parsing = st.checkbox("Use OpenRouter LLM to parse JD to structured requirements", value=True)
-    use_llm_for_explanations = st.checkbox("Use OpenRouter LLM to generate explanations", value=True)
+    # Removed: use_llm_for_parsing and use_llm_for_explanations checkboxes
     top_k = st.slider("Top K candidates to show explanations for", 1, 10, 5)
+    
+    # Display LLM status since toggles are removed
+    if not LLM_AVAILABLE:
+        st.warning("OPENROUTER_API_KEY not set. LLM features (JD parsing, explanations) are disabled.")
+
 
 if run_btn:
     if not jd_text or jd_text.strip() == "":
@@ -695,7 +706,7 @@ if run_btn:
 
         # Parse JD
         with st.spinner("Parsing job description..."):
-            if use_llm_for_parsing and OPENROUTER_API_KEY:
+            if use_llm_for_parsing:
                 try:
                     jd_struct = parse_jd_with_llm(jd_text)
                 except Exception as e:
@@ -703,8 +714,6 @@ if run_btn:
                     st.exception(traceback.format_exc())
                     jd_struct = {"must_have": [], "important": [], "nice_to_have": [], "implicit": []}
             else:
-                if use_llm_for_parsing and not OPENROUTER_API_KEY:
-                    st.warning("OPENROUTER_API_KEY not set — skipping LLM parsing.")
                 jd_struct = {"must_have": [], "important": [], "nice_to_have": [], "implicit": []}
 
         st.subheader("Parsed Job Requirements (Preview)")
@@ -734,7 +743,7 @@ if run_btn:
             with st.expander("Preview resume text"):
                 st.write(c["text"][:2000])
 
-        if use_llm_for_explanations and OPENROUTER_API_KEY:
+        if use_llm_for_explanations:
             st.subheader(f"Top {min(top_k, len(candidates))} explanations (from OpenRouter)")
             for c in candidates[:top_k]:
                 try:
@@ -744,8 +753,9 @@ if run_btn:
                     st.write(explanation)
                 except Exception as e:
                     st.warning(f"Failed to get explanation for {c['name']}: {e}")
-        elif use_llm_for_explanations and not OPENROUTER_API_KEY:
-            st.warning("OPENROUTER_API_KEY not configured — enable it to generate natural-language explanations.")
+        elif not LLM_AVAILABLE:
+             st.warning("Skipping explanations as OpenRouter is not configured.")
+
 
         st.success("Done")
 
