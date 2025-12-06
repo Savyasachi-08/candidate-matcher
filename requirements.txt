@@ -6,3 +6,5 @@ faiss-cpu
 rank-bm25
 requests
 python-dotenv
+chromadb
+numpy
