@@ -47,15 +47,15 @@ EMBED_DIM = 384
 
 # ------------------- Local store files -------------------
 EMBED_FILE = os.path.join(LOCAL_STORE_DIR, "embeddings.npy")
-META_FILE = os.path.join(LOCAL_STORE_DIR, "metadata.json")
-HASH_FILE = os.path.join(LOCAL_STORE_DIR, "hash_index.json")
-ID_LIST_FILE = os.path.join(LOCAL_STORE_DIR, "id_list.json")
+META_FILE = os.path.join(LOCAL_STORE_DIR, "metadata_chunks.json")
+HASH_FILE = os.path.join(LOCAL_STORE_DIR, "hash_index.json") 
+ID_LIST_FILE = os.path.join(LOCAL_STORE_DIR, "id_list_chunks.json") 
 
 # in-memory structures
-_local_embeddings, _local_metadata = None, None  # will load below
-_id_list: List[int] = []
-_next_id = 0
-_hash_to_id = {}
+_local_embeddings, _local_metadata = None, None 
+_id_list: List[int] = [] 
+_next_id = 0 
+_hash_to_id = {} 
 
 # ------------------- Chroma client placeholders -------------------
 _chroma_client = None
@@ -77,17 +77,21 @@ def _load_local_store():
                     hash_map = json.load(f)
             else:
                 hash_map = {}
-            # convert meta keys to ints
+            
             meta = {int(k): v for k, v in meta.items()}
             id_list = [int(x) for x in id_list]
             _local_embeddings = emb.astype(np.float32)
             _local_metadata = meta
             _id_list = id_list
             _hash_to_id = {k: int(v) for k, v in hash_map.items()}
-            _next_id = max(_id_list) + 1 if _id_list else 0
+            all_ids = list(_id_list) + list(_hash_to_id.values())
+            _next_id = max(all_ids) + 1 if all_ids else 0
             return
     except Exception as e:
-        st.warning(f"Failed to load local store (continuing with empty store): {e}")
+        # NOTE: This warning is kept for developer debugging but is not part of the final UI goal
+        # st.warning(f"Failed to load local store (continuing with empty store): {e}") 
+        pass 
+        
     # defaults
     _local_embeddings = np.zeros((0, EMBED_DIM), dtype=np.float32)
     _local_metadata = {}
@@ -98,99 +102,67 @@ def _load_local_store():
 def _save_local_store():
     global _local_embeddings, _local_metadata, _id_list, _hash_to_id
     try:
-        # ensure shapes
         if _local_embeddings is None:
             arr = np.zeros((0, EMBED_DIM), dtype=np.float32)
         else:
             arr = _local_embeddings.astype(np.float32)
         np.save(EMBED_FILE, arr)
+        
         meta_str_keys = {str(k): v for k, v in _local_metadata.items()}
         with open(META_FILE, "w", encoding="utf-8") as f:
             json.dump(meta_str_keys, f, ensure_ascii=False, indent=2)
+            
         with open(ID_LIST_FILE, "w", encoding="utf-8") as f:
             json.dump([int(x) for x in _id_list], f)
+            
         with open(HASH_FILE, "w", encoding="utf-8") as f:
             json.dump({k: int(v) for k, v in _hash_to_id.items()}, f)
+            
     except Exception as e:
-        st.warning(f"Failed to save local store: {e}")
+        pass
 
 # initialize local store
 _load_local_store()
 
-# ------------------- Chroma init (modern PersistentClient) -------------------
-
-import tempfile
-import errno
-
-import tempfile
-
-def _is_writable_dir(path: str) -> bool:
-    try:
-        os.makedirs(path, exist_ok=True)
-        testfile = os.path.join(path, f".perm_test_{os.getpid()}")
-        with open(testfile, "w") as f:
-            f.write("ok")
-        os.remove(testfile)
-        return True
-    except Exception:
-        return False
-
-
-import shutil
-import time
+# ------------------- Chroma init (Suppressed Output) -------------------
 
 def init_chroma(prefers_home: bool = True):
     global _chroma_client, _chroma_collection, CHROMA_DB_DIR
 
     if chromadb is None:
-        _chroma_client = None
-        _chroma_collection = None
         st.info("Chroma not installed — running local-only.")
         return
 
-    candidates = [
-        CHROMA_DB_DIR,
-        os.path.expanduser("~/.local/share/candidate_matcher/chroma_db"),
-        os.path.join(tempfile.gettempdir(), "candidate_matcher_chroma_db")
-    ]
-
     success_path = None
+    candidates = [CHROMA_DB_DIR]
 
     for p in candidates:
         try:
             os.makedirs(p, exist_ok=True)
-        except:
-            continue
-
-        # test-writable
-        try:
             testfile = os.path.join(p, ".write_test")
             with open(testfile, "w") as f:
                 f.write("ok")
             os.remove(testfile)
-        except:
-            continue
 
-        try:
             try:
                 client = chromadb.PersistentClient(path=p)
-            except:
+            except Exception:
                 client = chromadb.Client()
 
             try:
                 coll = client.get_collection(CHROMA_COLLECTION)
-            except:
-                coll = client.create_collection(CHROMA_COLLECTION)
+            except Exception:
+                coll = client.create_collection(CHROMA_COLLECTION, metadata={"hnsw:space": "cosine"})
 
             _chroma_client = client
             _chroma_collection = coll
             success_path = p
             break
-        except:
+        except Exception as e:
             continue
 
     if success_path:
-        st.success(f"Chroma initialized at: {success_path}")
+        pass
     else:
         st.warning("Chroma could not be initialized — falling back to local-only.")
         _chroma_client = None
@@ -198,18 +170,9 @@ def init_chroma(prefers_home: bool = True):
 
 
 def reset_chroma_collection(force_delete_dir: bool = False):
-    """
-    Reset/clear the Chroma collection in a safe way:
-    1) If chroma client exists, try to delete the collection via API (preferred).
-    2) Re-create an empty collection (client.create_collection).
-    3) If client doesn't exist or deletion via API fails, attempt to remove DB files
-       under CHROMA_DB_DIR safely (but only when force_delete_dir=True).
-    4) Always clear local numpy store files and in-memory structures.
-    """
     global _chroma_client, _chroma_collection
     global _local_embeddings, _local_metadata, _id_list, _next_id, _hash_to_id
 
-    # -------- CLEAR LOCAL NUMPY STORE --------
     try:
         for f in [EMBED_FILE, META_FILE, ID_LIST_FILE, HASH_FILE]:
             if os.path.exists(f):
@@ -217,65 +180,36 @@ def reset_chroma_collection(force_delete_dir: bool = False):
     except Exception as e:
         print("Warning while clearing local files:", e)
 
-    # reset in-memory
     _local_embeddings = np.zeros((0, EMBED_DIM), dtype=np.float32)
     _local_metadata = {}
     _id_list = []
     _next_id = 0
     _hash_to_id = {}
 
-    # -------- CHROMA CLIENT RESET --------
     if chromadb is None:
         return
 
     client = _chroma_client
 
-    # If no client, try to create one
-    if client is None:
-        try:
-            try:
-                client = chromadb.PersistentClient(path=CHROMA_DB_DIR)
-            except:
-                client = chromadb.Client()
-        except:
-            client = None
-
-    # Try API delete
     if client is not None:
         try:
-            if hasattr(client, "delete_collection"):
-                try:
-                    client.delete_collection(collection_name=CHROMA_COLLECTION)
-                except TypeError:
-                    client.delete_collection(CHROMA_COLLECTION)
-        except Exception as e:
-            print("Chroma API deletion failed:", e)
-
-        # Try to recreate collection
+            client.delete_collection(collection_name=CHROMA_COLLECTION)
+        except Exception:
+            pass
+        
         try:
-            try:
-                client = chromadb.PersistentClient(path=CHROMA_DB_DIR)
-            except:
-                client = chromadb.Client()
-            _chroma_client = client
-            _chroma_collection = client.create_collection(CHROMA_COLLECTION)
+            _chroma_client = chromadb.PersistentClient(path=CHROMA_DB_DIR)
+            _chroma_collection = _chroma_client.create_collection(CHROMA_COLLECTION, metadata={"hnsw:space": "cosine"})
             return
         except Exception:
-            pass  # fallback below
+            pass
 
-    # -------- FAILOVER: DELETE DIRECTORY --------
     if force_delete_dir:
         try:
             if os.path.exists(CHROMA_DB_DIR):
                 shutil.rmtree(CHROMA_DB_DIR)
             os.makedirs(CHROMA_DB_DIR, exist_ok=True)
-
-            try:
-                _chroma_client = chromadb.PersistentClient(path=CHROMA_DB_DIR)
-            except:
-                _chroma_client = chromadb.Client()
-
-            _chroma_collection = _chroma_client.create_collection(CHROMA_COLLECTION)
+            init_chroma()
         except Exception as e:
             print("Full Chroma dir reset failed:", e)
             _chroma_client = None
@@ -304,6 +238,51 @@ def extract_text_from_file(uploaded_file) -> str:
         st.warning(f"Failed to extract text from {uploaded_file.name}: {e}")
         return ""
 
+def extract_sections_from_text(full_text: str) -> List[Dict[str, str]]:
+    """Splits the full resume text into sections based on common headers."""
+    section_headers = [
+        "experience", "work experience", "professional experience",
+        "education", "skills", "technical skills", "projects",
+        "certifications", "summary", "profile", "contact"
+    ]
+    pattern = r"^\s*(" + "|".join(section_headers) + r")\s*[:\s]*(\n|$)"
+    
+    chunks = []
+    parts = re.split(pattern, full_text, flags=re.IGNORECASE | re.MULTILINE)
+    
+    current_content = parts[0].strip()
+    if current_content:
+        chunks.append({'header': 'Summary/Contact', 'content': current_content})
+
+    current_header = None
+    current_content = ""
+    for i in range(1, len(parts)):
+        is_header = any(re.match(h, parts[i].strip(), re.IGNORECASE) for h in section_headers)
+        
+        if is_header and parts[i].strip():
+            if current_header and current_content.strip():
+                chunks.append({'header': current_header.title(), 'content': current_content.strip()})
+            
+            current_header = parts[i].strip()
+            current_content = ""
+        elif parts[i] is not None:
+            current_content += parts[i]
+            
+    if current_header and current_content.strip():
+        chunks.append({'header': current_header.title(), 'content': current_content.strip()})
+    
+    if not chunks and full_text.strip():
+         chunks.append({'header': 'Full Text (No Sections Found)', 'content': full_text.strip()})
+         
+    final_chunks = []
+    seen_content = set()
+    for chunk in chunks:
+        if chunk['content'] and len(chunk['content']) > 50 and chunk['content'] not in seen_content:
+            final_chunks.append(chunk)
+            seen_content.add(chunk['content'])
+            
+    return final_chunks
+
 def embed_text_np(text: str) -> np.ndarray:
     vec = embedder.encode(text, convert_to_tensor=False)
     return np.asarray(vec, dtype=np.float32)
@@ -314,7 +293,7 @@ def _text_hash(text: str) -> str:
 # ------------------- Add / search / reset functions -------------------
 
 def add_resume_to_store(filename: str, full_text: str) -> int:
-    """Add resume to local store and to chroma (best-effort). Returns assigned id."""
+    """Add resume chunks to local store and to chroma (best-effort). Returns assigned *resume* id."""
     global _local_embeddings, _local_metadata, _id_list, _next_id, _hash_to_id, _chroma_collection
 
     h = _text_hash(full_text)
@@ -323,143 +302,222 @@ def add_resume_to_store(filename: str, full_text: str) -> int:
         st.info(f"Skipped duplicate upload (already stored): {filename} -> id {existing_id}")
         return existing_id
 
-    rid = _next_id
+    resume_id = _next_id
     _next_id += 1
 
-    emb = embed_text_np(full_text)
-    preview = full_text[:1000]
-
-    # append to local matrix
-    if _local_embeddings.size == 0:
-        _local_embeddings = emb.reshape(1, -1)
-    else:
-        _local_embeddings = np.vstack([_local_embeddings, emb.reshape(1, -1)])
-
-    _local_metadata[rid] = {"name": filename, "preview": preview}
-    _id_list.append(rid)
-    _hash_to_id[h] = rid
-
-    # persist local store
+    chunks = extract_sections_from_text(full_text)
+    if not chunks:
+        st.warning(f"Could not extract sections from {filename}. Storing full text as single chunk.")
+        chunks = [{'header': 'Full Document', 'content': full_text}]
+        
+    chunk_ids = []
+    chunk_embeddings = []
+    chunk_metadatas = []
+    
+    for chunk_idx, chunk in enumerate(chunks):
+        chunk_rid = _next_id
+        _next_id += 1
+        
+        chunk_text = chunk['content']
+        chunk_header = chunk['header']
+        
+        emb = embed_text_np(chunk_text)
+        preview = chunk_text[:500]
+        
+        # Local store update
+        if _local_embeddings.size == 0:
+            _local_embeddings = emb.reshape(1, -1)
+        else:
+            _local_embeddings = np.vstack([_local_embeddings, emb.reshape(1, -1)])
+            
+        _local_metadata[chunk_rid] = {
+            "name": filename, 
+            "preview": preview, 
+            "resume_id": resume_id, 
+            "section_header": chunk_header
+        }
+        _id_list.append(chunk_rid)
+        
+        # Collect data for Chroma batch insert
+        chunk_ids.append(str(chunk_rid))
+        chunk_embeddings.append(emb.tolist())
+        chunk_metadatas.append({
+            "name": filename, 
+            "hash": h, 
+            "resume_id": str(resume_id), 
+            "section_header": chunk_header
+        })
+    
+    _hash_to_id[h] = resume_id
     _save_local_store()
 
-    # try to add to chroma collection (best-effort)
-    if _chroma_collection is not None:
+    if _chroma_collection is not None and chunk_ids:
         try:
+            # FIX: Build the 'documents' list using the actual chunk data
+            chroma_documents = [
+                f"{c['header']}: {c['content'][:500]}"
+                for c in chunks 
+            ]
+            
             _chroma_collection.add(
-                ids=[str(rid)],
-                documents=[preview],
-                metadatas=[{"name": filename, "hash": h}],
-                embeddings=[emb.tolist()],
+                ids=chunk_ids,
+                documents=chroma_documents, 
+                metadatas=chunk_metadatas,
+                embeddings=chunk_embeddings,
             )
             try:
                 _chroma_client.persist()
             except Exception:
                 pass
         except Exception as e:
-            st.warning(f"Warning: adding to Chroma failed for {filename}: {e}")
+            st.warning(f"Warning: adding chunks to Chroma failed for {filename}: {e}")
 
-    return rid
+    return resume_id
 
 def cosine_sim(a: np.ndarray, B: np.ndarray) -> np.ndarray:
+    if B.shape[0] == 0:
+        return np.array([])
     if a.ndim == 1:
         a_norm = a / (np.linalg.norm(a) + 1e-12)
     else:
         a_norm = a.reshape(-1) / (np.linalg.norm(a) + 1e-12)
+    
     B_norm = B / (np.linalg.norm(B, axis=1, keepdims=True) + 1e-12)
+    
     sims = (B_norm @ a_norm).reshape(-1)
     return sims
 
+
 def search_local_by_cosine(jd_text: str, top_k: int = 10):
+    """Fallback search against local chunks."""
     if _local_embeddings.size == 0:
         return []
+        
     qvec = embed_text_np(jd_text)
     sims = cosine_sim(qvec, _local_embeddings)
-    top_idx = np.argsort(-sims)[:top_k]
-    results = []
-    for pos in top_idx:
-        if pos >= len(_id_list):
-            continue
-        rid = _id_list[pos]
-        meta = _local_metadata.get(rid, {})
-        results.append({"id": rid, "score": float(sims[pos]), "payload": meta, "preview": meta.get("preview", "")})
-    return results
+    
+    chunk_results = []
+    for pos, sim_val in enumerate(sims):
+        chunk_id = _id_list[pos]
+        meta = _local_metadata.get(chunk_id, {})
+        resume_id = meta.get("resume_id")
+
+        if resume_id is not None:
+             chunk_results.append({
+                "resume_id": resume_id, 
+                "score": float(sim_val), 
+                "payload": meta, 
+                "preview": meta.get("section_header", "") + ": " + meta.get("preview", "")
+            })
+    return chunk_results
+
 
 def search_via_chroma_first_then_local(jd_text: str, top_k: int = 10):
+    """Aggregates score by simple average of all chunks with positive similarity."""
+    
+    chunk_results = []
+    qvec = embed_text_np(jd_text)
+    qvec_list = qvec.tolist()
+
     if _chroma_collection is not None:
         try:
-            qvec = embed_text_np(jd_text).tolist()
             resp = _chroma_collection.query(
-                query_embeddings=[qvec],
-                n_results=top_k,
+                query_embeddings=[qvec_list],
+                n_results=100, 
                 include=["documents", "metadatas", "distances"],
             )
+            
             ids = resp.get("ids", [[]])[0] if isinstance(resp.get("ids", None), list) else []
-            docs = resp.get("documents", [[]])[0] if isinstance(resp.get("documents", None), list) else []
             metadatas = resp.get("metadatas", [[]])[0] if isinstance(resp.get("metadatas", None), list) else []
             distances = resp.get("distances", [[]])[0] if isinstance(resp.get("distances", None), list) else []
 
-            results = []
             for i, sid in enumerate(ids):
-                rid = None
-                try:
-                    rid = int(sid)
-                except Exception:
+                meta = metadatas[i]
+                resume_id = int(meta.get("resume_id")) if meta and meta.get("resume_id") else None
+                
+                sim_val = 0.0
+                if i < len(distances) and distances[i] is not None:
                     try:
-                        rid = int(str(sid))
+                        sim_val = float(1.0 - float(distances[i]))
                     except Exception:
-                        rid = None
-                payload = metadatas[i] if i < len(metadatas) else {}
-                doc_preview = docs[i] if i < len(docs) else payload.get("preview", "")
-                sim_val = None
-                if rid is not None and rid in _local_metadata:
-                    pos = _id_list.index(rid)
-                    emb = _local_embeddings[pos]
-                    qemb = embed_text_np(jd_text)
-                    sim_val = float(cosine_sim(qemb, emb.reshape(1, -1))[0])
-                else:
-                    if i < len(distances) and distances[i] is not None:
-                        try:
-                            sim_val = float(1.0 - float(distances[i]))
-                        except Exception:
-                            sim_val = 0.0
-                    else:
-                        sim_val = 0.0
-                results.append({"id": rid, "score": sim_val, "payload": payload, "preview": doc_preview})
-            if not results:
-                return search_local_by_cosine(jd_text, top_k)
-            results = sorted(results, key=lambda x: (x["score"] if x["score"] is not None else -999.0), reverse=True)
-            return results[:top_k]
+                        pass
+                
+                if resume_id is not None:
+                    doc_preview = resp.get("documents", [[]])[0][i] if resp.get("documents") else ""
+                    chunk_results.append({
+                        "resume_id": resume_id, 
+                        "score": sim_val, 
+                        "payload": meta, 
+                        "preview": doc_preview
+                    })
         except Exception as e:
             st.warning(f"Chroma query failed (falling back to local): {e}")
-            return search_local_by_cosine(jd_text, top_k)
+            chunk_results = search_local_by_cosine(jd_text, top_k=100)
     else:
-        return search_local_by_cosine(jd_text, top_k)
+        chunk_results = search_local_by_cosine(jd_text, top_k=100)
+
+
+    # --- STEP 3: Aggregate Chunk Scores (Average of All Positive Chunks) ---
+    
+    resume_chunk_scores: Dict[int, List[float]] = {}
+    resume_details: Dict[int, Dict[str, Any]] = {}
+    chunk_previews: Dict[int, List[Dict[str, Any]]] = {} 
+
+    for r in chunk_results:
+        rid = r["resume_id"]
+        score = r["score"]
+        name = r["payload"].get("name", f"resume_{rid}")
+        
+        if score > 0: # Only consider positive scores
+            if rid not in resume_chunk_scores:
+                resume_chunk_scores[rid] = []
+                resume_details[rid] = {"name": name}
+                chunk_previews[rid] = []
+            
+            resume_chunk_scores[rid].append(score)
+            chunk_previews[rid].append({"score": score, "preview": r["preview"]})
+
+    final_results = []
+    
+    for rid, scores in resume_chunk_scores.items():
+        if not scores:
+            continue
+            
+        average_score = sum(scores) / len(scores)
+            
+        chunk_previews[rid].sort(key=lambda x: x["score"], reverse=True)
+        TOP_N_DISPLAY = 3
+        
+        top_previews = [
+            f"**{i+1}.** [{p['score']:.4f}] {p['preview']}" 
+            for i, p in enumerate(chunk_previews[rid][:TOP_N_DISPLAY])
+        ]
+        
+        score_note = f"\n(Score is the average of **{len(scores)}** positive-scoring sections.)"
+        
+        final_results.append({
+            "id": rid, 
+            "score": average_score, 
+            "payload": {"name": resume_details[rid]["name"]},
+            "preview": "\n\n---\n\n".join(top_previews) + score_note, 
+            "full_resume_text_temp": "" 
+        })
+        
+    final_results = sorted(final_results, key=lambda x: x["score"], reverse=True)
+    return final_results[:top_k]
+
 
 def dedupe_results_by_id_keep_best(results: List[Dict[str, Any]]):
-    best = {}
-    for r in results:
-        rid = r.get("id")
-        if rid is None:
-            rid = r.get("payload", {}).get("name") or r.get("preview")
-        score = r.get("score") if r.get("score") is not None else 0.0
-        if rid not in best or score > best[rid]["score"]:
-            best[rid] = {"item": r, "score": float(score)}
-    deduped = [v["item"] for v in sorted(best.values(), key=lambda x: x["score"], reverse=True)]
-    return deduped
+    return results
 
 def reset_local_store():
     global _local_embeddings, _local_metadata, _id_list, _next_id, _hash_to_id
     try:
-        if os.path.exists(EMBED_FILE):
-            os.remove(EMBED_FILE)
-        if os.path.exists(META_FILE):
-            os.remove(META_FILE)
-        if os.path.exists(ID_LIST_FILE):
-            os.remove(ID_LIST_FILE)
-        if os.path.exists(HASH_FILE):
-            os.remove(HASH_FILE)
+        for f in [EMBED_FILE, META_FILE, ID_LIST_FILE, HASH_FILE]:
+            if os.path.exists(f):
+                os.remove(f)
     except Exception as e:
-        st.warning(f"Failed to remove local store files: {e}")
+        print("Warning while clearing local files:", e)
     _local_embeddings = np.zeros((0, EMBED_DIM), dtype=np.float32)
     _local_metadata = {}
     _id_list = []
@@ -469,27 +527,12 @@ def reset_local_store():
     st.info("Local embedding store reset (files cleared).")
 
 
-# ------------------- OpenRouter LLM helpers (unchanged) -------------------
+# ------------------- OpenRouter LLM helpers (NO CACHING DECORATOR) -------------------
 
 import time
-from functools import lru_cache
-
-# Small LRU cache for explanations & JD parsing to avoid repeated LLM calls during development
-# (maxsize can be tuned).
-@lru_cache(maxsize=64)
-def _cached_call_openrouter_cache_key(model, system_prompt, user_prompt):
-    # we won't call this directly — wrapper will call requests after checking cache
-    return None
 
 def call_openrouter(model: str, system_prompt: str, user_prompt: str, max_retries: int = 4, base_backoff: float = 1.0):
-    """
-    Robust OpenRouter caller with exponential backoff.
-    Does NOT show intermediate retry messages — only shows a single final UI message:
-      - success: returns text (no message shown here, caller may st.success)
-      - failure after retries: shows ONE st.warning and returns None
-    """
     if not OPENROUTER_API_KEY:
-        # caller handles missing key
         return None
 
     headers = {
@@ -513,33 +556,27 @@ def call_openrouter(model: str, system_prompt: str, user_prompt: str, max_retrie
             resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
             resp.raise_for_status()
             data = resp.json()
-            # normal response shape
             if "choices" in data and len(data["choices"]) > 0:
-                # handle both chat-style and legacy shapes
                 choice = data["choices"][0]
                 if isinstance(choice, dict) and "message" in choice and isinstance(choice["message"], dict):
                     return choice["message"].get("content")
                 if isinstance(choice, dict) and "text" in choice:
                     return choice.get("text")
-            # fallback: return full json as string
             return json.dumps(data)
         except requests.exceptions.HTTPError as he:
             status = getattr(he.response, "status_code", None)
             last_error = he
-            # treat 429 and 5xx as retryable
             if status == 429 or (status and 500 <= status < 600):
                 backoff = base_backoff * (2 ** (attempt - 1))
-                # jitter
                 jitter = backoff * 0.1 * (0.5 - (time.time() % 1))
                 sleep_t = min(backoff + jitter, 30.0)
                 time.sleep(sleep_t)
                 continue
-            # non-retryable HTTP error -> break and return None
             try:
-                body = he.response.text
+                print("OpenRouter HTTP error body:", he.response.text)
             except Exception:
-                body = None
-            st.error(f"OpenRouter HTTP error {status}: {body}")
+                pass
+            st.error(f"OpenRouter HTTP error {status}: {he}")
             return None
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as conn_e:
             last_error = conn_e
@@ -548,24 +585,13 @@ def call_openrouter(model: str, system_prompt: str, user_prompt: str, max_retrie
             continue
         except Exception as e:
             last_error = e
-            # unexpected -> stop retrying
             break
 
-    # retries exhausted — show a single friendly message and return None
     st.warning("OpenRouter is currently unavailable or rate-limited. Using local fallback. (Retries exhausted.)")
-    # optionally print last error to console for debugging (not UI)
-    try:
-        print("OpenRouter last error:", repr(last_error))
-    except Exception:
-        pass
     return None
 
 
 def parse_jd_with_llm(jd_text: str) -> dict:
-    """
-    Use LLM to parse JD -> structured JSON. If LLM call fails, return empty safe structure.
-    The function will show the raw LLM output in the UI if parsing fails, for debugging.
-    """
     safe_empty = {"must_have": [], "important": [], "nice_to_have": [], "implicit": []}
     system_prompt = (
         "You are a recruitment assistant. Given a job description, output STRICT JSON only. "
@@ -577,24 +603,21 @@ def parse_jd_with_llm(jd_text: str) -> dict:
     user_prompt = f"JOB DESCRIPTION:\n\n{jd_text}\n\nReturn JSON only."
     raw = None
     try:
+        # LLM parsing is ALWAYS attempted here as per the prompt's implied need
         raw = call_openrouter(OPENROUTER_MODEL, system_prompt, user_prompt)
     except Exception as e:
         st.warning(f"OpenRouter call raised an exception: {e}")
         raw = None
 
     if not raw:
-        # fallback: try simple heuristic splitting by lines with bullets or return safe empty
         lines = [l.strip("-• \t") for l in jd_text.splitlines() if l.strip()]
-        # pick some lines as "must_have" heuristically (first 4 lines)
         heur = [{"skill": (line[:80] + "...") if len(line) > 80 else line, "description": line, "weight": 0.5, "min_years": None} for line in lines[:4]]
         if heur:
             return {"must_have": heur, "important": [], "nice_to_have": [], "implicit": []}
         return safe_empty
 
-    # attempt to extract JSON defensively
     try:
         raw_clean = html.unescape(raw).strip()
-        # strip markdown fences
         raw_clean = re.sub(r"^```(?:json)?\n?|\n?```$", "", raw_clean).strip()
         first_brace = raw_clean.find("{")
         last_brace = raw_clean.rfind("}")
@@ -605,9 +628,8 @@ def parse_jd_with_llm(jd_text: str) -> dict:
         parsed = json.loads(raw_json)
         return parsed
     except Exception:
-        # show raw LLM output for debugging (but don't crash)
         try:
-            st.warning("OpenRouter output couldn't be parsed as JSON. Showing raw LLM output below for debugging.")
+            st.warning("LLM output couldn't be parsed as JSON. Showing raw LLM output below for debugging.")
             st.code(raw, language="json")
         except Exception:
             print("LLM raw output:", raw)
@@ -619,16 +641,16 @@ def explain_candidate_with_llm(jd_struct: dict, resume_text: str, base_score: fl
         "produce a concise (<=200 words) explanation of why the candidate matches or doesn't, listing matched skills, missing skills, and an overall score 0-100."
     )
     user_prompt = (
-        f"JOB REQUIREMENTS JSON:\n{json.dumps(jd_struct, indent=2)}\n\nRESUME TEXT:\n{resume_text[:6000]}\n\`nBASE_SIM_SCORE:{base_score:.4f}"
+        f"JOB REQUIREMENTS JSON:\n{json.dumps(jd_struct, indent=2)}\n\nRESUME TEXT:\n{resume_text[:6000]}\n\nAVERAGE_SIM_SCORE:{base_score:.4f}"
     )
     raw = call_openrouter(OPENROUTER_MODEL, system_prompt, user_prompt)
     if raw:
         return raw
+    
     # fallback succinct explanation
     matched = []
     missing = []
     try:
-        # quick heuristic: check if skill names appear in resume
         for group in ["must_have", "important", "nice_to_have"]:
             for item in jd_struct.get(group, []):
                 sk = item.get("skill", "")
@@ -641,17 +663,22 @@ def explain_candidate_with_llm(jd_struct: dict, resume_text: str, base_score: fl
     matched = matched[:6]
     missing = missing[:6]
     return (
-        f"(LLM unavailable) Heuristic summary — base_sim: {base_score:.3f}\n"
+        f"(LLM unavailable) Heuristic summary — avg_sim: {base_score:.3f}\n"
         f"Matched skills: {', '.join(matched) if matched else 'None'}\n"
         f"Missing skills (sample): {', '.join([m for m in missing if m]) if missing else 'None'}"
     )
 
-# ------------------- Streamlit UI -------------------
 
-st.set_page_config(layout="wide", page_title="Candidate Matcher (Chroma + file store)")
-st.title("Candidate Matcher — Streamlit (Chroma + file store)")
+# ------------------- Streamlit UI (FINAL MODIFIED BLOCK) -------------------
+
+st.set_page_config(layout="wide", page_title="Candidate Matcher (Chunking & Average Scoring)")
+st.title("Candidate Matcher — Streamlit (Chunking & Average Scoring)")
 
 col1, col2 = st.columns([2, 1])
+
+# Set LLM usage flags to True (always try to use them if key is available)
+USE_LLM_FOR_PARSING = True
+USE_LLM_FOR_EXPLANATIONS = True
 
 with col1:
     jd_input_type = st.radio("Job description input:", ["Paste text", "Upload file"], index=0)
@@ -671,9 +698,8 @@ with col1:
 
 with col2:
     st.markdown("**Settings**")
-    use_llm_for_parsing = st.checkbox("Use OpenRouter LLM to parse JD to structured requirements", value=True)
-    use_llm_for_explanations = st.checkbox("Use OpenRouter LLM to generate explanations", value=True)
-    top_k = st.slider("Top K candidates to show explanations for", 1, 10, 5)
+    # ONLY SLIDER REMAINS
+    top_k = st.slider("Top K candidates to show", 1, 10, 5)
 
 if run_btn:
     if not jd_text or jd_text.strip() == "":
@@ -681,21 +707,27 @@ if run_btn:
     elif not resumes or len(resumes) == 0:
         st.error("Please upload at least one resume.")
     else:
-        # AUTOMATIC CLEAR: reset local store + chroma so only newly uploaded resumes are present
         reset_local_store()
         reset_chroma_collection(force_delete_dir=False)
 
-        st.info("Embedding and storing resumes (local files + Chroma if available)...")
+        st.info("Embedding and storing resume chunks (local files + Chroma if available)...")
+        
+        uploaded_file_map = {} 
         for f in resumes:
             try:
                 txt = extract_text_from_file(f)
-                add_resume_to_store(f.name, txt)
+                rid = add_resume_to_store(f.name, txt)
+                uploaded_file_map[rid] = {"name": f.name, "full_text": txt}
             except Exception as e:
                 st.warning(f"Failed to process {f.name}: {e}")
-
-        # Parse JD
+                
+        if not uploaded_file_map:
+             st.error("No resumes were successfully processed or stored.")
+             st.stop()
+             
+        # Parse JD (always attempt LLM parsing)
         with st.spinner("Parsing job description..."):
-            if use_llm_for_parsing and OPENROUTER_API_KEY:
+            if USE_LLM_FOR_PARSING and OPENROUTER_API_KEY:
                 try:
                     jd_struct = parse_jd_with_llm(jd_text)
                 except Exception as e:
@@ -703,55 +735,61 @@ if run_btn:
                     st.exception(traceback.format_exc())
                     jd_struct = {"must_have": [], "important": [], "nice_to_have": [], "implicit": []}
             else:
-                if use_llm_for_parsing and not OPENROUTER_API_KEY:
-                    st.warning("OPENROUTER_API_KEY not set — skipping LLM parsing.")
+                if USE_LLM_FOR_PARSING and not OPENROUTER_API_KEY:
+                    st.warning("OPENROUTER_API_KEY not set — skipping LLM parsing and using heuristic fallback.")
                 jd_struct = {"must_have": [], "important": [], "nice_to_have": [], "implicit": []}
 
         st.subheader("Parsed Job Requirements (Preview)")
         st.json(jd_struct)
 
+        # Search against chunks and aggregate
         results = search_via_chroma_first_then_local(jd_text, top_k=max(top_k, len(resumes)))
-        # dedupe
-        results = dedupe_results_by_id_keep_best(results)
+        results = dedupe_results_by_id_keep_best(results) 
 
         candidates = []
         for r in results:
             rid = r.get("id")
             score = r.get("score", 0.0) if r.get("score") is not None else 0.0
-            payload = r.get("payload") or {}
-            preview = r.get("preview") or payload.get("preview", "")
-            if (not preview) and (rid in _local_metadata):
-                preview = _local_metadata[rid].get("preview", "")
-            name = payload.get("name") if isinstance(payload, dict) else None
-            name = name or (_local_metadata[rid]["name"] if rid in _local_metadata else f"resume_{rid}")
-            candidates.append({"name": name, "text": preview, "sim": float(score)})
+            
+            file_info = uploaded_file_map.get(rid, {})
+            name = file_info.get("name", f"resume_{rid}")
+            full_text = file_info.get("full_text", "")
+
+            candidates.append({
+                "name": name, 
+                "full_text": full_text, 
+                "best_chunks_preview": r.get("preview", ""), 
+                "sim": float(score)
+            })
 
         candidates = sorted(candidates, key=lambda x: x["sim"], reverse=True)
 
-        st.subheader("Ranked candidates (by cosine similarity)")
+        st.subheader("Ranked candidates (by Average of All Positive Chunks)")
         for idx, c in enumerate(candidates):
-            st.markdown(f"**{idx+1}. {c['name']}** — base sim: {c['sim']:.4f}")
-            with st.expander("Preview resume text"):
-                st.write(c["text"][:2000])
-
-        if use_llm_for_explanations and OPENROUTER_API_KEY:
+            st.markdown(f"**{idx+1}. {c['name']}** — **AVERAGE SIM SCORE**: {c['sim']:.4f}")
+            with st.expander("Top 3 Matching Chunks & Scores"):
+                st.markdown(c["best_chunks_preview"])
+                
+        # Explanations (always attempt LLM explanations)
+        if USE_LLM_FOR_EXPLANATIONS and OPENROUTER_API_KEY:
             st.subheader(f"Top {min(top_k, len(candidates))} explanations (from OpenRouter)")
             for c in candidates[:top_k]:
                 try:
                     with st.spinner(f"Explaining {c['name']}..."):
-                        explanation = explain_candidate_with_llm(jd_struct, c['text'], c['sim'])
+                        explanation = explain_candidate_with_llm(jd_struct, c['full_text'], c['sim']) 
                     st.markdown(f"**{c['name']}** — explanation:")
                     st.write(explanation)
                 except Exception as e:
                     st.warning(f"Failed to get explanation for {c['name']}: {e}")
-        elif use_llm_for_explanations and not OPENROUTER_API_KEY:
-            st.warning("OPENROUTER_API_KEY not configured — enable it to generate natural-language explanations.")
+        elif USE_LLM_FOR_EXPLANATIONS and not OPENROUTER_API_KEY:
+            st.warning("OPENROUTER_API_KEY not configured — explanation LLM skipped.")
 
         st.success("Done")
 
 # Footer
 st.markdown("---")
 st.markdown(
-    "Notes: This app persists embeddings and metadata in ./chroma_store/ (files) and attempts to add them into a Chroma collection in ./chroma_db/.\n"
-    "Each run clears the previous store so only newly uploaded resumes are compared."
+    "Notes: This app uses **resume chunking** and an **average similarity score of all positive-matching chunks** for ranking.\n"
+    "Embeddings are persisted in local files and Chroma.\n"
+    "Each run clears the previous store."
 )
