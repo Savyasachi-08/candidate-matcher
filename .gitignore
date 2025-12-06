@@ -1,0 +1,39 @@
+
+## `.gitignore`
+```gitignore
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+env/
+venv/
+.venv/
+.Python
+build/
+dist/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit / runtime
+.streamlit/
+
+# environment files
+.env
+.env.* 
+secrets.toml
+
+# pyenv
+.python-version
+
+# Jupyter
+.ipynb_checkpoints
+
+# Virtual env folders
+venv/
