@@ -1097,11 +1097,12 @@ if run_btn:
 
         table_data_sorted = sorted(table_data, key=get_sort_key, reverse=True)
 
-        # Re-rank after sorting
-        for i, item in enumerate(table_data_sorted):
+        table_data_final_display = table_data_sorted[:top_k]
+        
+        for i, item in enumerate(table_data_final_display):
             item["Rank"] = i + 1
             
-        st.dataframe(table_data_sorted, use_container_width=True)
+        st.dataframe(table_data_final_display, use_container_width=True)
 
 
         # --------------------- Raw Preview (for reference) ---------------------
