@@ -1,17 +1,15 @@
-# Candidate Matcher — Streamlit + OpenRouter (Free)
+# Candidate Matcher — Hybrid Scoring Engine (Gemini + OpenRouter)
 
-A small prototype that ranks candidate resumes against a job description using local embeddings
-(`sentence-transformers/all-MiniLM-L6-v2`) and optional OpenRouter LLM (free models) for
-parsing job descriptions and generating explanations.
+A prototype that ranks candidate resumes against a job description using a hybrid scoring model that combines local semantic matching with contextual LLM qualitative assessment.
 
-> **Note:** This repo does **not** contain any API keys. Set `OPENROUTER_API_KEY` as an environment
-> variable or GitHub secret.
+> **Note:** This repository requires API keys for two services to enable full functionality.
 
 ## Features
-- Upload a job description + multiple resumes (PDF/DOCX/TXT) via Streamlit UI.
-- Local semantic matching using sentence-transformers + cosine similarity.
-- Optional LLM parsing & explanations using OpenRouter free models.
-- Toggle LLM usage in the UI.
+- **Hybrid Scoring:** Calculates a **Final Hybrid Score** by combining the Vector Similarity Score (50%) and the LLM's Qualitative Match Score (50%).
+- **Multi-LLM Support:** Toggle and use **Gemini** or **OpenRouter** models for JD parsing and qualitative scoring.
+- **Flexible Input:** Upload the JD and resumes via file upload, or paste **multiple resumes** directly into the text input fields.
+- **Core Matching:** Local semantic matching using `sentence-transformers/all-MiniLM-L6-v2` + cosine similarity.
+- **Enhanced UX:** Uses a single, centralized Streamlit progress loader (`st.status`) for cleaner processing feedback.
 
 ## Quick start (local)
 
@@ -27,8 +25,9 @@ parsing job descriptions and generating explanations.
 
 3. Create a .env file in the project root:
     ```bash
-    OPENROUTER_API_KEY="API KEY"
-
+    OPENROUTER_API_KEY="YOUR_OPENROUTER_KEY"
+    GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+    
 4. Run the app:
     ```bash
     streamlit run app.py
