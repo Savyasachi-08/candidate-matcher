@@ -725,9 +725,9 @@ with col1:
 
     else: 
         uploaded_files = st.file_uploader("Upload candidate resumes (PDF/DOCX/TXT)", 
-                                           type=["pdf", "docx", "txt"], 
-                                           accept_multiple_files=True, 
-                                           key="resume_file_uploader")
+                                             type=["pdf", "docx", "txt"], 
+                                             accept_multiple_files=True, 
+                                             key="resume_file_uploader")
 
     st.markdown("---")
     run_btn = st.button("Run Matching")
@@ -911,17 +911,20 @@ if run_btn:
             
         # Sort the table by Final Hybrid Score
         def get_sort_key(item):
-             try:
-                 return float(item["Final Hybrid Score (0.0-1.0)"])
-             except ValueError:
-                 return 0.0
+            try:
+                return float(item["Final Hybrid Score (0.0-1.0)"])
+            except ValueError:
+                return 0.0
 
         table_data_sorted = sorted(table_data, key=get_sort_key, reverse=True)
 
-        for i, item in enumerate(table_data_sorted):
+        # Apply the fix: Slice the sorted data to show only the Top K results specified by the user
+        table_data_final_display = table_data_sorted[:top_k]
+
+        for i, item in enumerate(table_data_final_display):
             item["Rank"] = i + 1
             
-        st.dataframe(table_data_sorted, use_container_width=True)
+        st.dataframe(table_data_final_display, use_container_width=True)
 
         st.success("Analysis Complete!")
 
