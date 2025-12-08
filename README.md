@@ -59,4 +59,6 @@ This repository contains **two implementations**:
     ```bash
     streamlit run app.py
 
+## Sample Input Files (for Testing)
 
+The repository includes an `input_files/` directory containing sample documents you can use to test the app immediately:
