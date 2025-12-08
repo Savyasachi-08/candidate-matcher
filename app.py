@@ -47,10 +47,10 @@ os.makedirs(LOCAL_STORE_DIR, exist_ok=True)
 # ------------------- Embedding model -------------------
 @st.cache_resource
 def load_embedder():
-    return SentenceTransformer("all-MiniLM-L6-v2")
+    return SentenceTransformer("all-mpnet-base-v2")
 
 embedder = load_embedder()
-EMBED_DIM = 384
+EMBED_DIM = 768
 
 # ------------------- Local store files -------------------
 EMBED_FILE = os.path.join(LOCAL_STORE_DIR, "embeddings.npy")

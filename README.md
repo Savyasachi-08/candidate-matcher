@@ -2,14 +2,41 @@
 
 A prototype that ranks candidate resumes against a job description using a hybrid scoring model that combines local semantic matching with contextual LLM qualitative assessment.
 
-> **Note:** This repository requires API keys for two services to enable full functionality.
+This repository contains **two implementations**:
 
-## Features
-- **Hybrid Scoring:** Calculates a **Final Hybrid Score** by combining the Vector Similarity Score (50%) and the LLM's Qualitative Match Score (50%).
-- **Multi-LLM Support:** Toggle and use **Gemini** or **OpenRouter** models for JD parsing and qualitative scoring.
-- **Flexible Input:** Upload the JD and resumes via file upload, or paste **multiple resumes** directly into the text input fields.
-- **Core Matching:** Local semantic matching using `sentence-transformers/all-MiniLM-L6-v2` + cosine similarity.
-- **Enhanced UX:** Uses a single, centralized Streamlit progress loader (`st.status`) for cleaner processing feedback.
+- **Baseline Matcher (main branch):**  
+  Direct embedding comparison between JD and full resumes + LLM explanations.
+
+- **LLM-Structured Matcher (chunking_resume_before_embedding branch):**  
+  JD and resumes are semantically **chunked into sections** by an LLM before embedding → more accurate, section-aware matching.
+
+> **Note:** This repository requires API keys for full functionality.
+
+---
+
+## Features (Baseline System — `main`)
+- **Hybrid Scoring:**  
+  Final score = **50% Vector Similarity + 50% LLM Score**.
+- **Multi-LLM Support:**  
+  Works with **Gemini** or **OpenRouter** for JD parsing and candidate explanations.
+- **Flexible Input:**  
+  Upload files OR paste multiple resumes directly.
+- **Local Semantic Search:**  
+  Uses `all-mpnet-base-v2` + cosine similarity.
+- **Streamlined UX:**  
+  Centralized loader (`st.status`) showing each processing phase.
+
+---
+
+## Additional Features (Advanced Structured Version — `chunking_resume_before_embedding`)
+
+- LLM-based **chunking of JD + resumes** into sections: Skills, Experience, Education, Projects, etc.
+- **Section-to-Section Matching** with weighted scoring.
+- Embedding model: `all-mpnet-base-v2`.
+- Final Hybrid Score = **30% Vector Score + 70% LLM Score**.
+- Displays **per-section strengths** to explain why a candidate ranked higher.
+
+---
 
 ## Quick start (local)
 
